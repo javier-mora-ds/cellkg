@@ -1,0 +1,20 @@
+# CellKG — ignore heavy/derived artifacts; keep code, cypher, curated CSVs, reports
+.venv/
+server/
+data/raw/*.gz
+data/raw/*.obo
+data/raw/*.json
+data/raw/*.txt
+data/interim/
+data/import/
+__pycache__/
+*.pyc
+.env
+reports/*.dump
+ml/models/
+# keep the curated organelle inputs under version control
+!data/raw/organelles/
+# exclude full data and reports directories and the guide
+data/
+reports/
+GUIDE.md

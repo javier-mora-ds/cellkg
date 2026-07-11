@@ -1,0 +1,13 @@
+# CellKG — Python dependencies (Python 3.12)
+# Heavy packages (torch, pandas, pyarrow, networkx) are provided by the base
+# interpreter and reused via a --system-site-packages venv; pinned exact
+# versions are captured in requirements.lock via `pip freeze` after install.
+neo4j
+pykeen
+obonet
+pandas
+pyarrow
+networkx
+requests
+tqdm
+torch

@@ -18,3 +18,4 @@ ml/models/
 data/
 reports/
 GUIDE.md
+.pytest_cache/

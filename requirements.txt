@@ -11,3 +11,13 @@ networkx
 requests
 tqdm
 torch
+# ---- GNN track (ml/gnn/) ----
+# torch_geometric must match the base interpreter's torch (2.12.0): 2.8.0 verified importable on the
+# build machine; confirm the exact pin at install time on any other host.
+torch_geometric
+iterative-stratification
+scikit-learn
+scipy
+matplotlib
+pyyaml
+pytest

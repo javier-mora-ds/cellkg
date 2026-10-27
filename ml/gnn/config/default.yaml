@@ -1,0 +1,60 @@
+# CellKG Track 2 — full-run configuration (CellKG_gnn_plan.md, Appendix A).
+# Executed scope: "Core" — plan defaults frozen (no random search), primary losses with 5 seeds,
+# ablations with 1 seed, KGE with 3 seeds on P1-strict (Gate B) and 1 seed elsewhere.
+seed: 20260702
+device: cpu                       # cpu | mps (env CELLKG_GNN_DEVICE overrides)
+threads: 3                        # torch intra-op threads per process (fixed for determinism)
+protocols: [p1, p2]
+export: {source: auto, interact_sample: 40000, eval_triples: 3000, loc_sample: 200}
+graph:
+  regimes: [strict, full]         # P1 message-passing regimes; P2 always uses the full edge set minus held-out genes
+  include_proteins: false
+  ppi_weight: false               # true = GraphConv with destination-normalized STRING weights (ablation)
+features: {biotype: true, biotype_group: true, chromosome: true, strand: true, length: true,
+           tissue_specificity: true, n_interactions: true, degrees: true, bp_mf_multihot: true}
+p2: {n_folds: 5, hpo_fold: 1}
+kge:
+  models: [TransE, RotatE]
+  embedding_dim: 128
+  epochs: 25
+  lr: 0.005
+  batch_size: 2048
+  eval_batch_size: 512
+  seeds: [20260702, 20260703, 20260704]    # P1-strict (Gate B + variance)
+  other_seeds: [20260702]                  # P1-full and every P2 fold
+  gate_b: {tol_exact: 0.005, tol_accept: 0.02, tol_overall: 0.01}
+sage:
+  hidden: 128
+  layers: 2
+  dropout: 0.3
+  decoder: linear                 # linear | dag
+  rho: 0.5
+  lr: 0.003
+  weight_decay: 0.0001
+  clip: 1.0
+  epochs: 400
+  min_epochs: 30
+  patience: 40
+  early_stopping_metric: map14
+  seeds: [20260702, 20260703, 20260704, 20260705, 20260706]
+  ablation_seeds: [20260702]
+losses:
+  default: logit_adjusted
+  logit_adjusted: {tau: 1.0}
+  weighted: {tau: 0.5, max_pos_weight: 50}
+  class_balanced: {beta: 0.999}
+  focal: {gamma: 2.0, alpha: 0.25}
+  asl: {gamma_pos: 0.0, gamma_neg: 4.0, margin: 0.05}
+  reliability_weights: null       # or {Enhanced: 1.0, Supported: 0.8, Approved: 0.6, Uncertain: 0.3}
+mlp: {hidden: 256, epochs: 400, min_epochs: 30, patience: 40, lr: 0.003, dropout: 0.3, weight_decay: 0.0001}
+propagation: {alpha: 0.8, sweeps: 20}
+metrics:
+  ks: [1, 3, 10]
+  alphas: [0.0, 0.5, 1.0]
+  rare_tail: [CTK, ERT, CTS, NVL, CRM, PRX, LYS]
+  ultra_rare: [CRM, PRX, LYS]
+  min_valid_positives: 5
+  bootstrap: {draws: 1000, level: 0.95}
+  ties: realistic
+hpo: {n_configs: 0, space: {hidden: [128, 256], layers: [2, 3], dropout: [0.2, 0.5], lr: [0.001, 0.003], rho: [0.3, 0.5]}}
+writeback: {top_k: 3, min_score: 0.5, embeddings: true}

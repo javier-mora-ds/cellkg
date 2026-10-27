@@ -1,0 +1,7 @@
+# Smoke-run overrides, merged after default.yaml when --fast is given.
+sage: {epochs: 2, min_epochs: 1, patience: 1, seeds: [20260702], ablation_seeds: [20260702]}
+mlp: {epochs: 2, min_epochs: 1, patience: 1}
+kge: {epochs: 1, seeds: [20260702], other_seeds: [20260702]}
+metrics: {bootstrap: {draws: 20}}
+p2: {n_folds: 5}
+hpo: {n_configs: 0}

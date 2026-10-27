@@ -69,7 +69,7 @@ reports directory) are intentionally excluded via `.gitignore` and regenerated b
 
 ```
 cellkg/
-├── Makefile                 # orchestration: setup|organelles|fetch|build|load|validate|query|ml|all
+├── Makefile                 # orchestration: setup|organelles|fetch|build|load|validate|query|ml|all|gnn-*
 ├── requirements.txt / .lock # Python dependencies (pinned in .lock)
 ├── src/                     # ETL + database helpers
 │   ├── make_organelles.py   # curated 22-organelle CSVs
@@ -85,6 +85,8 @@ cellkg/
 │   ├── run_competency.py    # execute the 10 competency questions
 │   └── cellkg_db.py         # .env-driven Neo4j driver helper
 ├── ml/run_pykeen.py         # TransE + RotatE link prediction
+├── ml/gnn/                  # Track 2: GraphSAGE + representativeness-weighted evaluation harness
+├── tests/                   # pytest (fast tests; `-m slow` needs trained artifacts)
 ├── cypher/                  # DDL constraints, competency + presentation queries
 └── data/raw/organelles/     # curated organelle inputs (only tracked data)
 ```
@@ -153,6 +155,19 @@ predictions that can be used to prioritize experiments.
 ```zsh
 PYTHONPATH=src ./.venv/bin/python ml/run_pykeen.py --epochs 60 --dim 256 --interact-sample 100000
 ```
+
+### Graph neural network track
+
+`ml/gnn/` adds a heterogeneous **GraphSAGE** model (PyTorch Geometric) that encodes each gene from its attributes and its interaction, process, function, chromosome and ontology neighbourhoods, and scores all 22 organelles at once with masked-label training and a logit-adjusted loss. Every method — popularity prior, neighbour vote, label propagation, a feature-only perceptron, re-trained TransE/RotatE and GraphSAGE — is scored by one harness on identical held-out edges: the exact replay of the PyKEEN split (the published degree, TransE and RotatE numbers are reproduced exactly) and a 5-fold inductive gene split. Alongside micro MRR/Hits@k the harness reports macro and representativeness-weighted MRR, per-organelle AP/AUROC, rare-tail aggregates and gene-level bootstrap intervals. GraphSAGE is the first model of the project to beat the popularity prior on the published metric; results are in `reports/gnn/comparison_table.md` and §8 of the technical report.
+
+```zsh
+make gnn-setup    # PyTorch Geometric + iterative-stratification in the venv
+make gnn          # graph, splits, KGE re-training, baselines, GraphSAGE, ablations, evaluation, comparison
+make gnn-test     # fast tests
+make gnn-fast     # smoke run of the whole track into reports/gnn_fast/
+```
+
+Neo4j is needed once, by `make gnn-splits`, to export the triples in store order for the exact replay; the export is persisted under `reports/gnn/export/` and every later stage runs offline on CPU.
 
 ---
 

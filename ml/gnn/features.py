@@ -100,3 +100,8 @@ def build_features(
         mu, sd = X[train_rows, j].mean(), X[train_rows, j].std()
         X[:, j] = (X[:, j] - mu) / (sd if sd > 0 else 1.0)
     return X.astype(np.float32)
+
+
+def permute_rows(X: np.ndarray, seed: int) -> np.ndarray:
+    """Row-permuted copy of X (attributes detached from their genes); the input is never modified."""
+    return X[np.random.default_rng(seed).permutation(len(X))]

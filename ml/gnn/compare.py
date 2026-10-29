@@ -35,6 +35,10 @@ NAMES = {
     "sage_cb": "SAGE-CB",
     "sage_asl": "SAGE-ASL",
     "sage_la_rho0": "SAGE-LA, rho = 0 (S4)",
+    "mlp_bce_xperm": "MLP-BCE (permuted X)",
+    "mlp_bce_xperm_posthoc": "MLP-BCE (permuted X) + post-hoc LA",
+    "sage_bce_xperm": "SAGE-BCE (permuted X)",
+    "sage_bce_xperm_posthoc": "SAGE-BCE (permuted X) + post-hoc LA",
 }
 ORDER = list(NAMES)
 PUBLISHED = [
@@ -68,6 +72,23 @@ MODEL_STYLE = {
     "ppi_vote": (C["red"], "v"),
 }
 LABEL_OFFSET = {"prior": (6, 6), "RotatE": (8, 4), "sage_bce": (8, -12), "sage_la": (-8, 8)}
+# factorial 2 x 2 cells: T5 crosses the encoder with the loss; T5b crosses the encoder with the attributes
+# (real X vs row-permuted X, the topology-only control); the second factor is always b, d vs a, c
+FACTORIAL_LOSS = (("a", "mlp_bce"), ("b", "mlp_la"), ("c", "sage_bce"), ("d", "sage_la"))
+FACTORIAL_XPERM = (
+    ("a", "mlp_bce_xperm"),
+    ("b", "mlp_bce"),
+    ("c", "sage_bce_xperm"),
+    ("d", "sage_bce"),
+)
+XPERM_PAIRS = (
+    ("sage_bce", "sage_bce_xperm"),
+    ("sage_bce_xperm", "mlp_bce_xperm"),
+    ("sage_bce_xperm", "prior"),
+    ("sage_bce_xperm", "label_prop"),
+    ("mlp_bce_xperm", "prior"),
+    ("mlp_bce", "mlp_bce_xperm"),
+)
 KEYS_T2 = [
     ("MRR_a0@C14", "micro-MRR"),
     ("MRR_a0.5@C14", "MRR a=0.5"),
@@ -270,15 +291,16 @@ def table_t3(R: Results, eval_set: str, regime: str, n_train: np.ndarray) -> pd.
     return pd.DataFrame(rows)
 
 
-def factorial(R: Results, eval_set: str, regime: str) -> pd.DataFrame | None:
-    cells = {
-        k: R.boot(m, regime, eval_set)
-        for k, m in (("a", "mlp_bce"), ("b", "mlp_la"), ("c", "sage_bce"), ("d", "sage_la"))
-    }
-    pts = {
-        k: R.point(m, regime, eval_set)
-        for k, m in (("a", "mlp_bce"), ("b", "mlp_la"), ("c", "sage_bce"), ("d", "sage_la"))
-    }
+def factorial(
+    R: Results,
+    eval_set: str,
+    regime: str,
+    cells_of: tuple = FACTORIAL_LOSS,
+    factor2: str = "loss",
+) -> pd.DataFrame | None:
+    """2 x 2 contrasts (graph, `factor2`, interaction) over the cells a to d named by `cells_of`."""
+    cells = {k: R.boot(m, regime, eval_set) for k, m in cells_of}
+    pts = {k: R.point(m, regime, eval_set) for k, m in cells_of}
     if any(v is None for v in cells.values()) or any(v is None for v in pts.values()):
         return None
     rows = []
@@ -287,16 +309,10 @@ def factorial(R: Results, eval_set: str, regime: str) -> pd.DataFrame | None:
         pa, pb, pc, pd_ = (pts[x][k] for x in "abcd")
         eff = {
             "graph": ((c + d) / 2 - (a + b) / 2, (pc + pd_) / 2 - (pa + pb) / 2),
-            "loss": ((b + d) / 2 - (a + c) / 2, (pb + pd_) / 2 - (pa + pc) / 2),
+            factor2: ((b + d) / 2 - (a + c) / 2, (pb + pd_) / 2 - (pa + pc) / 2),
             "interaction": ((d - c) - (b - a), (pd_ - pc) - (pb - pa)),
         }
-        row = {
-            "Metric": lab,
-            "a MLP-BCE": fmt(pa),
-            "b MLP-LA": fmt(pb),
-            "c SAGE-BCE": fmt(pc),
-            "d SAGE-LA": fmt(pd_),
-        }
+        row = {"Metric": lab, **{f"{x} {NAMES[m]}": fmt(pts[x][k]) for x, m in cells_of}}
         for nm, (boot, pt) in eff.items():
             lo, hi = ci(boot)
             row[f"{nm} effect [95 % CI]"] = f"{pt:+.3f} [{lo:+.3f}, {hi:+.3f}]"
@@ -725,6 +741,20 @@ def main() -> None:
         f = factorial(R, es, reg)
         if f is not None:
             out += [f"## T5 — factorial 2 × 2 ({lab}; paired gene bootstrap)", "", md_table(f), ""]
+    t5b = []
+    for es, reg, lab in (("p1_full", "full", "P1-full"), ("p2_pooled", "pooled", "pooled P2")):
+        f = factorial(R, es, reg, FACTORIAL_XPERM, "attributes")
+        if f is not None:
+            out += [
+                f"## T5b — factorial 2 × 2 encoder × attributes ({lab}; real vs row-permuted X; "
+                "paired gene bootstrap)",
+                "",
+                md_table(f),
+                "",
+            ]
+            t5b.append(f.assign(Eval=f"{es}/{reg}"))
+    if t5b:
+        pd.concat(t5b).to_csv(root / "comparison_factorial_xperm.csv", index=False)
     pairs = []
     for es, reg in (("p1_full", "full"), ("p1_full", "strict"), ("p2_pooled", "pooled")):
         for a, b in (
@@ -734,6 +764,9 @@ def main() -> None:
             ("sage_la", "ppi_vote"),
             ("sage_la", "sage_bce"),
         ):
+            pairs += paired(R, es, reg, a, b)
+    for es, reg in (("p1_full", "full"), ("p1_full", "strict"), ("p2_pooled", "pooled")):
+        for a, b in XPERM_PAIRS:  # the topology-only control, appended after the 5 original pairs
             pairs += paired(R, es, reg, a, b)
     if pairs:
         pdf = pd.DataFrame(pairs)
@@ -792,7 +825,7 @@ def main() -> None:
     update_manifest(
         "compare",
         {
-            "tables": ["T1", "T2", "T3", "T4", "T5", "T6", "panel"],
+            "tables": ["T1", "T2", "T3", "T4", "T5", "T5b", "T6", "panel"],
             "figures": sorted(p.name for p in fdir.glob("*.png")),
         },
         cfg,

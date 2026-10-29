@@ -40,7 +40,7 @@ clean:                ## remove derived intermediates and import CSVs
 	rm -rf data/interim/* data/import/*
 
 # ---- GNN track (additive; `all` is unchanged) --------------------------------
-.PHONY: gnn-setup lock gnn-test gnn-graph gnn-splits gnn-kge gnn-baselines gnn-train gnn-ablations \
+.PHONY: gnn-setup lock gnn-test gnn-graph gnn-splits gnn-kge gnn-baselines gnn-train gnn-ablations gnn-xperm \
         gnn-eval gnn-compare gnn gnn-fast all-gnn clean-gnn clean-gnn-all
 
 GNNPY   := PYTHONPATH=src:ml $(PY)
@@ -78,6 +78,10 @@ gnn-ablations:        ## class-balanced and asymmetric losses (1 seed); sanity c
 	$(GNNPY) -m gnn.train --config $(GNN_CFG) --protocol all --loss class_balanced --jobs $(GNN_JOBS) $(GNN_FLAGS)
 	$(GNNPY) -m gnn.train --config $(GNN_CFG) --protocol all --loss asl --jobs $(GNN_JOBS) $(GNN_FLAGS)
 	$(GNNPY) -m gnn.train --config $(GNN_CFG) --protocol p1 --regimes full --loss logit_adjusted --rho 0 --seeds 20260702 --jobs 1 $(GNN_FLAGS)
+
+gnn-xperm:            ## topology-only control: perceptron and GraphSAGE (BCE) on row-permuted gene attributes; adds *_xperm* artifacts only
+	$(GNNPY) -m gnn.train --config $(GNN_CFG) --protocol all --model mlp --loss bce --features perm --jobs $(GNN_JOBS) $(GNN_FLAGS)
+	$(GNNPY) -m gnn.train --config $(GNN_CFG) --protocol all --model sage --loss bce --features perm --jobs $(GNN_JOBS) $(GNN_FLAGS)
 
 gnn-eval:             ## the harness over every score matrix -> reports/gnn/metrics/
 	$(GNNPY) -m gnn.evaluate --config $(GNN_CFG) $(GNN_FLAGS)

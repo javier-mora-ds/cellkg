@@ -7,6 +7,7 @@ every gene is exported with the test-time input graph (every training localizati
 from __future__ import annotations
 
 import copy
+import json
 import multiprocessing as mp
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -49,10 +50,12 @@ class Job:
     seed: int
     rho: float
     save_embedding: bool = False
+    features: str = "real"  # real | perm (row-permuted gene attributes; permutation seed = job.seed)
 
     @property
     def model_name(self) -> str:
-        return f"{self.kind}_{LOSS_TAG[self.loss]}" + ("_rho0" if self.rho == 0 else "")
+        name = f"{self.kind}_{LOSS_TAG[self.loss]}" + ("_rho0" if self.rho == 0 else "")
+        return name + ("_xperm" if self.features == "perm" else "")
 
 
 @lru_cache(maxsize=8)
@@ -106,6 +109,10 @@ def run_job(job: Job, cfg: dict) -> dict:
     seed_everything(job.seed, cfg.get("threads"))
     device = select_device(cfg)
     index, vocab, task, X, static_eid = _context(job.protocol, job.regime)
+    if job.features == "perm":  # topology-only control: attributes detached from their genes
+        from gnn.features import permute_rows
+
+        X = permute_rows(X, job.seed)  # own generator and a copy: the cached X of _context stays intact
     n_genes, n_org = len(index.genes), len(vocab)
     org_cc = index.organelle_cc_idx(vocab)
     Y_train = task.labels("train", n_genes, n_org)
@@ -206,6 +213,8 @@ def run_job(job: Job, cfg: dict) -> dict:
         "device": device,
         "rho": job.rho,
         "loss": job.loss,
+        "features": job.features,
+        "perm_seed": job.seed if job.features == "perm" else None,
         "eligible_classes": [c for c, e in zip(vocab.codes, elig) if e],
         "leakage_assert": "passed",
         "seconds": time.time() - t0,
@@ -250,17 +259,35 @@ def run_job(job: Job, cfg: dict) -> dict:
     }
 
 
+def _progress(**rec) -> None:
+    """One `PROGRESS {json}` line on stdout (card / step / finished) for a launcher console."""
+    print("PROGRESS " + json.dumps(rec, default=str), flush=True)
+
+
+def _progress_step(n: int, r: dict) -> None:
+    _progress(
+        record="step",
+        index=n,
+        val_map=r["best_val_map_elig"],
+        best_epoch=r["best_epoch"],
+        epochs=r["epochs_run"],
+        job_s=round(r["seconds"], 1),
+    )
+
+
 def run_jobs(jobs: list[Job], cfg: dict, n_workers: int, log: StageLog) -> list[dict]:
     results = []
     if n_workers <= 1:
         for j in jobs:
             results.append(run_job(j, cfg))
             log(f"  {results[-1]}")
+            _progress_step(len(results), results[-1])
         return results
     with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp.get_context("spawn")) as ex:
         for r in ex.map(run_job, jobs, [cfg] * len(jobs)):
             results.append(r)
             log(f"  {r}")
+            _progress_step(len(results), r)
     return results
 
 
@@ -272,6 +299,7 @@ def build_jobs(
     rho: float | None = None,
     seeds: list[int] | None = None,
     regimes: list[str] | None = None,
+    features: str = "real",
 ) -> list[Job]:
     primary = loss in ("bce", "logit_adjusted")
     seeds = seeds or (cfg["sage"]["seeds"] if primary else cfg["sage"]["ablation_seeds"])
@@ -288,10 +316,47 @@ def build_jobs(
             s,
             rho,
             save_embedding=(kind == "sage" and s == seeds[0] and p == "p1"),
+            features=features,
         )
         for p, r in tasks
         for s in seeds
     ]
+
+
+def _card(cfg: dict, args, jobs: list[Job]) -> dict:
+    """Header card of a launcher console (the exact parameter count is added by the launcher)."""
+    hp = cfg["sage"] if args.model == "sage" else cfg["mlp"]
+    enc = "HeteroSAGE" if args.model == "sage" else "FeatureMLP"
+    seeds = sorted({j.seed for j in jobs})
+    return {
+        "model": f"{jobs[0].model_name} ({enc}, masked-label full-batch training)",
+        "encoder": enc,
+        "total": len(jobs),
+        "unit": "job",
+        "best": {"val_map": "max"},
+        "standard_metrics": False,
+        "hyperparameters": {
+            "optimizer": "AdamW",
+            "learning_rate": hp["lr"],
+            "weight_decay": hp.get("weight_decay", 1e-4),
+            "hidden": hp["hidden"],
+            "max_epochs": hp["epochs"],
+            "loss": args.loss,
+            "gradient_clip": cfg["sage"]["clip"],
+            "dropout": hp.get("dropout", 0.3),
+            "rho": jobs[0].rho,
+            "seeds": seeds,
+        },
+        "protocol": (
+            "early stop on validation mAP over the organelles with at least "
+            f"{cfg['metrics']['min_valid_positives']} validation positives, patience {hp['patience']}, "
+            f"min epochs {hp.get('min_epochs', 1)}, best epoch restored; one optimizer step per epoch"
+        ),
+        "features": args.features,
+        "jobs": f"{len(jobs)} = {len({(j.protocol, j.regime) for j in jobs})} tasks x {len(seeds)} seeds",
+        "workers": f"{args.jobs} processes x {cfg.get('threads')} threads",
+        "device": select_device(cfg),
+    }
 
 
 def main() -> None:
@@ -305,19 +370,31 @@ def main() -> None:
     )
     ap.add_argument("--seeds", type=int, nargs="*", default=None)
     ap.add_argument("--jobs", type=int, default=4, help="parallel worker processes")
+    ap.add_argument(
+        "--features",
+        default="real",
+        choices=["real", "perm"],
+        help="perm = row-permuted gene attributes (topology-only control)",
+    )
     args = ap.parse_args()
     cfg = resolve_args(args)
     log = StageLog("train")
-    jobs = build_jobs(cfg, args.model, args.loss, args.protocol, args.rho, args.seeds, args.regimes)
+    jobs = build_jobs(
+        cfg, args.model, args.loss, args.protocol, args.rho, args.seeds, args.regimes, args.features
+    )
     log(
-        f"{len(jobs)} jobs: model={args.model} loss={args.loss} protocol={args.protocol} rho={jobs[0].rho}"
+        f"{len(jobs)} jobs: model={args.model} loss={args.loss} protocol={args.protocol} "
+        f"rho={jobs[0].rho} features={args.features}"
     )
+    _progress(record="card", **_card(cfg, args, jobs))
     res = run_jobs(jobs, cfg, args.jobs, log)
-    update_manifest(
-        f"train_{args.model}_{LOSS_TAG[args.loss]}" + ("_rho0" if args.rho == 0 else ""),
-        {"jobs": res},
-        cfg,
+    _progress(
+        record="finished",
+        jobs=len(res),
+        best_val_map=max(r["best_val_map_elig"] for r in res),
+        train_hours=round(sum(r["seconds"] for r in res) / 3600, 2),
     )
+    update_manifest(f"train_{jobs[0].model_name}", {"jobs": res}, cfg)
     log("OK gnn.train")
 
 

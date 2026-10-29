@@ -165,6 +165,7 @@ make gnn-setup    # PyTorch Geometric + iterative-stratification in the venv
 make gnn          # graph, splits, KGE re-training, baselines, GraphSAGE, ablations, evaluation, comparison
 make gnn-test     # fast tests
 make gnn-fast     # smoke run of the whole track into reports/gnn_fast/
+make gnn-xperm    # topology-only control: perceptron and GraphSAGE on row-permuted attributes (adds *_xperm* artifacts)
 ```
 
 Neo4j is needed once, by `make gnn-splits`, to export the triples in store order for the exact replay; the export is persisted under `reports/gnn/export/` and every later stage runs offline on CPU.
